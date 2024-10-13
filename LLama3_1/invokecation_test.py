@@ -15,7 +15,8 @@ client = boto3.client(
 
 #LLama 3.1 8b 모델
 
-model_id = "meta.llama3-1-8b-instruct-v1:0"
+#model_id = "meta.llama3-1-8b-instruct-v1:0"
+model_id = "meta.llama3-1-405b-instruct-v1:0"
 
 prompt = "안녕 친구. 너의 이름은 뭐냐?"
 

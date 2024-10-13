@@ -73,7 +73,7 @@ if user_prompt := st.chat_input("Ask something..."):
 
     # Invoke the LLaMA 3.1 model without streaming
     response = client.invoke_model(
-        modelId="meta.llama3-1-8b-instruct-v1:0",
+        modelId="meta.llama3-1-405b-instruct-v1:0",
         body=request_body,
         contentType="application/json"
     )
