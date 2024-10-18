@@ -8,7 +8,7 @@ pytrends = TrendReq(
 )
 
 # 검색 키워드 설정 (음식 관련)
-# 키워드 같은 경우는 한 번에 5번으로 제한
+# 키워드 같은 경우는 한 번에 5개로 제한
 kw_list = ['탕후루', '요아정', '우설']
 
 pytrends.build_payload(kw_list, cat=71, timeframe='today 3-m', geo='KR')

@@ -16,14 +16,14 @@ interest_over_time_df = pytrends.interest_over_time()
 print(" =============== interest over time =============== ")
 print(interest_over_time_df)
 
-interest_by_region_df = pytrends.interest_by_region(
-    resolution='CITY',
-    inc_low_vol=True,
-    inc_geo_code=True)
-print(" =============== interest by region =============== ")
-print(interest_by_region_df)
+# interest_by_region_df = pytrends.interest_by_region(
+#     resolution='CITY',
+#     inc_low_vol=True,
+#     inc_geo_code=True)
+# print(" =============== interest by region =============== ")
+# print(interest_by_region_df)
 
-# related_queries_dict = pytrends.related_queries()
+# related_queries_dict = pytrends.related_queries("요아정")
 # print(" =============== related queries dict =============== ")
 # print(related_queries_dict)
 
@@ -42,9 +42,9 @@ print(interest_by_region_df)
 # 이것 또한 파라미터 설정 해야함
 # 그냥 지금으로써는 미국 기준으로 나오는 듯
 
-trending_search = pytrends.trending_searches(pn="korea")
-print(" =============== trending_search =============== ")
-print(trending_search)
+# trending_search = pytrends.trending_searches(pn=kw_list[0])
+# print(" =============== trending_search =============== ")
+# print(trending_search)
 
 
 # 타임아웃 이슈
