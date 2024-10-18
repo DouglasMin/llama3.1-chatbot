@@ -8,7 +8,8 @@ import pandas as pd
 from pytrends.request import TrendReq
 import altair as alt
 import plotly.express as px
-
+import requests
+from datetime import datetime
 # 페이지 설정
 st.set_page_config(page_title="AI Gordon Ramsay Dashboard", layout="wide")
 
@@ -58,6 +59,11 @@ client = boto3.client(
     aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
 )
 
+# YouTube API 설정
+API_KEY = os.getenv('YOUTUBE_SEARCH_API_KEY')  # Replace with actual API key
+KEYWORDS = ['음식 창업', '요식업', '음식']
+MAX_RESULTS_PER_KEYWORD = 2
+
 model_id = "meta.llama3-1-405b-instruct-v1:0"
 
 # Pytrends 설정
@@ -65,41 +71,243 @@ model_id = "meta.llama3-1-405b-instruct-v1:0"
 def get_pytrends():
     return TrendReq(hl='ko', tz=540)
 
+
+# YouTube 관련 함수들
+def get_youtube_thumbnail(video_id):
+    return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+
+def search_youtube_videos(keyword):
+    base_url = 'https://www.googleapis.com/youtube/v3/search'
+    params = {
+        'part': 'snippet',
+        'maxResults': MAX_RESULTS_PER_KEYWORD,
+        'key': API_KEY,
+        'type': 'video',
+        'q': keyword,
+        'order': 'viewCount',
+        'relevanceLanguage': 'ko'
+    }
+
+    try:
+        response = requests.get(base_url, params=params)
+        data = response.json()
+        
+        videos = []
+        for item in data.get('items', []):
+            video_id = item['id']['videoId']
+            
+            video_url = f'https://www.googleapis.com/youtube/v3/videos'
+            video_params = {
+                'part': 'statistics,snippet',
+                'id': video_id,
+                'key': API_KEY
+            }
+            
+            video_response = requests.get(video_url, params=video_params)
+            video_data = video_response.json()
+            
+            if 'items' in video_data and video_data['items']:
+                video_info = video_data['items'][0]
+                snippet = video_info['snippet']
+                statistics = video_info['statistics']
+                
+                video = {
+                    'video_id': video_id,
+                    'title': snippet['title'],
+                    'channel': snippet['channelTitle'],
+                    'publish_date': datetime.strptime(snippet['publishedAt'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d'),
+                    'views': int(statistics.get('viewCount', 0)),
+                    'likes': int(statistics.get('likeCount', 0)),
+                    'thumbnail': get_youtube_thumbnail(video_id),
+                    'url': f'https://www.youtube.com/watch?v={video_id}',
+                    'keyword': keyword
+                }
+                videos.append(video)
+                
+        return videos
+    
+    except requests.RequestException as e:
+        st.error(f'Error fetching videos: {e}')
+        return []
+
+
+
 # 데이터 로드 함수
 @st.cache_data
-def load_data(kw_list):
+def load_trend_data(keywords):
     pytrends = get_pytrends()
-    pytrends.build_payload(kw_list, cat=71, timeframe='today 3-m', geo='KR')
+    pytrends.build_payload(keywords, cat=71, timeframe='today 3-m', geo='KR')
     df_region = pytrends.interest_by_region(resolution='REGION', inc_low_vol=True, inc_geo_code=True)
     df_time = pytrends.interest_over_time()
-
+    
+    # 추천 검색어 안전하게 가져오기
+    suggestions = {}
+    for kw in keywords:
+        try:
+            suggestions[kw] = pytrends.suggestions(keyword=kw)
+        except Exception as e:
+            st.warning(f"{kw}에 대한 추천 검색어를 가져오는 데 문제가 발생했습니다: {str(e)}")
+            suggestions[kw] = []
+    
     df_region = df_region.reset_index()
     df_time = df_time.reset_index()
-    return df_region, df_time
+    return df_region, df_time, suggestions
+
+def keyword_trend():
+    st.markdown('<p class="big-font">키워드 트렌드 분석</p>', unsafe_allow_html=True)
+    
+    if 'df_time' in st.session_state and 'keywords' in st.session_state:
+        df_time = st.session_state.df_time
+        keywords = st.session_state.keywords
+
+        st.subheader("키워드 트렌드 인사이트")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("🔥 전일 인기 키워드")
+            daily_top = df_time.iloc[-1].drop('date').sort_values(ascending=False).head(5)
+            fig_daily = px.bar(x=daily_top.index, y=daily_top.values, labels={'x': '키워드', 'y': '관심도'})
+            fig_daily.update_layout(showlegend=False)
+            st.plotly_chart(fig_daily, use_container_width=True)
+
+            st.subheader("📅 월간 인기 키워드")
+            monthly_top = df_time.iloc[-30:].drop('date', axis=1).mean().sort_values(ascending=False).head(5)
+            fig_monthly = px.bar(x=monthly_top.index, y=monthly_top.values, labels={'x': '키워드', 'y': '관심도'})
+            fig_monthly.update_layout(showlegend=False)
+            st.plotly_chart(fig_monthly, use_container_width=True)
+
+        with col2:
+            st.subheader("🔥7️⃣ 주간 인기 키워드")
+            weekly_top = df_time.iloc[-7:].drop('date', axis=1).mean().sort_values(ascending=False).head(5)
+            fig_weekly = px.bar(x=weekly_top.index, y=weekly_top.values, labels={'x': '키워드', 'y': '관심도'})
+            fig_weekly.update_layout(showlegend=False)
+            st.plotly_chart(fig_weekly, use_container_width=True)
+
+            st.subheader("🔍 추천 검색어")
+            for kw in keywords:
+                with st.expander(f"**{kw}** 관련 추천 검색어"):
+                    suggestions = st.session_state.suggestions[kw]
+                    for suggestion in suggestions[:5]:
+                        st.write(f"• {suggestion['title']}")
+
+        # 시간별 관심도 시각화
+        st.subheader('⏳ 시간별 키워드 관심도')
+        fig_time = px.line(df_time, x='date', y=keywords, title='시간 경과에 따른 관심도')
+        fig_time.update_layout(legend_title_text='키워드')
+        st.plotly_chart(fig_time, use_container_width=True)
+
+    else:
+        st.warning("키워드 검색 페이지에서 데이터를 분석하면 여기에 트렌드 인사이트가 표시됩니다.")
+
+    # 유튜브 동영상 섹션 (항상 표시)
+    st.markdown('<p class="big-font">추천 푸드테크 창업 영상</p>', unsafe_allow_html=True)
+    st.markdown("""
+    푸드테크, 요식업, 창업, 맛집 관련 인기 YouTube 동영상을 확인해 보세요
+    """)
+    
+    # Cache the video data
+    @st.cache_data(ttl=3600)
+    def get_all_videos():
+        all_videos = []
+        for keyword in KEYWORDS:
+            videos = search_youtube_videos(keyword)
+            all_videos.extend(videos)
+        return all_videos
+    
+    videos = get_all_videos()
+    
+    if not videos:
+        st.error("비디오를 불러오는데 실패했습니다. 잠시 후 다시 시도해주세요.")
+        return
+    
+    # Create three columns for video cards
+    cols = st.columns(3)
+    
+    # Display videos in cards
+    for idx, video in enumerate(videos[:3]):
+        with cols[idx % 3]:
+            st.video(video['url'])
+            
+            # Video info
+            st.markdown(f"**{video['title'][:50]}...**")
+            st.markdown(f"채널: {video['channel']}")
+            
+            st.markdown("---")
+    
+    # 키워드별 통계 섹션 개선
+    st.subheader("📊 키워드별 통계")
+    
+    df = pd.DataFrame(videos)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("평균 조회수")
+        avg_views = df.groupby('keyword')['views'].mean().sort_values(ascending=False)
+        fig_views = px.bar(avg_views, labels={'value': '평균 조회수', 'keyword': '키워드'})
+        st.plotly_chart(fig_views, use_container_width=True)
+    
+    with col2:
+        st.subheader("평균 좋아요 수")
+        avg_likes = df.groupby('keyword')['likes'].mean().sort_values(ascending=False)
+        fig_likes = px.bar(avg_likes, labels={'value': '평균 좋아요 수', 'keyword': '키워드'})
+        st.plotly_chart(fig_likes, use_container_width=True)
+
+    # 요약 테이블
+    st.subheader("키워드별 평균 지표")
+    summary = df.groupby('keyword').agg({
+        'views': 'mean',
+        'likes': 'mean'
+    }).round(0)
+    
+    summary.columns = ['평균 조회수', '평균 좋아요']
+    st.dataframe(summary.style.format(thousands=','), use_container_width=True)
+
+
+
 
 def keyword_search():
     st.markdown('<p class="big-font">🔍 키워드 검색</p>', unsafe_allow_html=True)
     
-    # 키워드 입력
-    keywords = st.text_input('검색 키워드를 입력하세요', '수제버거, 버거킹, 탕후루, 요아정').split(',')
-    keywords = [k.strip() for k in keywords[:5]]
+    st.markdown("""
+    검색하고 싶은 키워드를 입력하세요. 여러 키워드를 검색하려면 쉼표(,)로 구분하여 입력해 주세요.
+    예: 수제버거, 버거킹, 탕후루
+    """)
     
-    # 세션 상태에서 키워드를 유지
-    if 'selected_keyword' not in st.session_state:
-        st.session_state.selected_keyword = keywords[0]
-
-    if st.button('데이터 분석 시작'):
-        df_region, df_time = load_data(keywords)
-        st.session_state.df_region = df_region  # 지역별 데이터를 세션에 저장
-        st.session_state.df_time = df_time      # 시간별 데이터를 세션에 저장
+    keywords_input = st.text_input('검색 키워드를 입력하세요', key='keyword_input')
+    
+    keywords = [k.strip() for k in keywords_input.split(',') if k.strip()]
+    
+    # 버튼 비활성화 조건 설정
+    button_disabled = len(keywords) == 0
+    
+    if st.button('데이터 분석 시작', disabled=button_disabled):
+        if not keywords:
+            st.warning("유효한 키워드를 입력해 주세요.")
+        else:
+            if len(keywords) > 5:
+                st.warning("최대 5개의 키워드만 입력 가능합니다. 처음 5개의 키워드만 사용됩니다.")
+                keywords = keywords[:5]
+            
+            with st.spinner('데이터를 분석 중입니다...'):
+                df_region, df_time, suggestions = load_trend_data(keywords)
+                st.session_state.df_region = df_region
+                st.session_state.df_time = df_time
+                st.session_state.suggestions = suggestions
+                st.session_state.keywords = keywords
+            
+            if 'selected_keyword' not in st.session_state or st.session_state.selected_keyword not in keywords:
+                st.session_state.selected_keyword = keywords[0]
 
     # 데이터가 세션에 존재할 경우 시각화 진행
     if 'df_region' in st.session_state and 'df_time' in st.session_state:
         df_region = st.session_state.df_region
         df_time = st.session_state.df_time
+        keywords = st.session_state.keywords
         
         col1, col2 = st.columns([3, 1])
-
+        
         # 지역별 관심도 지도 시각화
         with col1:
             st.subheader('📊 지역별 키워드 관심도')
@@ -108,7 +316,7 @@ def keyword_search():
             st.session_state.selected_keyword = selected_keyword
 
             # 데이터 유효성 확인
-            if df_region[selected_keyword].isnull().all():
+            if selected_keyword not in df_region.columns or df_region[selected_keyword].isnull().all():
                 st.warning(f"선택한 키워드 '{selected_keyword}'에 대한 데이터가 없습니다.")
             else:
                 # 지도 시각화
@@ -125,13 +333,15 @@ def keyword_search():
 
         with col2:
             st.subheader('🏆 Top 5 지역')
-            top_5 = df_region.sort_values(by=selected_keyword, ascending=False).head()
-            for i, row in top_5.iterrows():
-                st.metric(label=row['geoName'], value=f"{row[selected_keyword]:.0f}")
+            if selected_keyword in df_region.columns:
+                top_5 = df_region.sort_values(by=selected_keyword, ascending=False).head()
+                for i, row in top_5.iterrows():
+                    st.metric(label=row['geoName'], value=f"{row[selected_keyword]:.0f}")
+            else:
+                st.warning("선택한 키워드에 대한 데이터가 없습니다.")
 
         # 시간별 관심도 시각화
         st.subheader('⏳ 시간별 키워드 관심도')
-
         df_time['date'] = pd.to_datetime(df_time['date'])
         fig_time = px.line(df_time, x='date', y=keywords, title='시간 경과에 따른 관심도', labels={'value':'관심도', 'date':'날짜'})
         st.plotly_chart(fig_time, use_container_width=True)
@@ -150,12 +360,9 @@ def keyword_search():
         # 상세 데이터 표시
         st.subheader('📋 상세 데이터')
         st.dataframe(df_region.style.highlight_max(axis=0), use_container_width=True)
+    else:
+        st.info("키워드를 입력하고 '데이터 분석 시작' 버튼을 클릭하면 분석 결과를 볼 수 있습니다.")
 
-
-
-# 사이드바 및 메인 화면 관련 함수
-def keyword_trend():
-    st.markdown('<p class="big-font">키워드 트렌드</p>', unsafe_allow_html=True)
 
 def chatbot():
     st.markdown('<p class="big-font">🤖Knowledge SMUW Bot🤖</p>', unsafe_allow_html=True)
@@ -177,6 +384,30 @@ def chatbot():
             full_response = f"여기에 AI Gordon Ramsay의 대답이 들어갑니다. 현재는 간단한 예시 응답입니다: '{prompt}'에 대해 어떤 생각을 가지고 계신가요?"
             message_placeholder.markdown(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+def show_help():
+    with st.expander("도움말", expanded=True):
+        st.markdown("""
+        ### SMUW 푸드테크 창업 Helper 사용법
+
+        #### 1. 키워드 트렌드
+        - 키워드 검색 페이지에서 분석한 키워드의 트렌드를 확인할 수 있습니다.
+        - 전일, 주간, 월간 인기 키워드와 시간별 관심도 변화를 그래프로 확인할 수 있습니다.
+
+        #### 2. 키워드 검색
+        - 검색하고 싶은 키워드를 입력하세요. 여러 키워드는 쉼표(,)로 구분합니다.
+        - 최대 5개까지의 키워드를 입력할 수 있습니다.
+        - '데이터 분석 시작' 버튼을 클릭하여 분석을 시작합니다.
+        - 분석 결과로 지역별 관심도, 시간별 관심도, 키워드별 전체 관심도 비교 등을 확인할 수 있습니다.
+
+        #### 3. 챗봇
+        - AI Gordon Ramsay와 대화를 나눌 수 있습니다.
+        - 음식, 요리, 레스토랑 등에 관한 질문을 해보세요.
+
+        #### 주의사항
+        - 데이터 로딩에 시간이 걸릴 수 있으니 잠시만 기다려 주세요.
+        - 일부 키워드의 경우 데이터가 충분하지 않을 수 있습니다.
+        """)
 
 def main():
     st.markdown('<p class="big-font"></p>', unsafe_allow_html=True)
@@ -216,7 +447,7 @@ def main():
             st.session_state.clear()
 
         if st.button("❓Help"):
-            st.info("도움말 내용을 여기에 표시합니다.")
+            show_help()
         
         st.markdown("made by aination")
 
@@ -227,6 +458,7 @@ def main():
         keyword_search()
     elif st.session_state.menu == '챗봇':
         chatbot()
+    
 
 if __name__ == "__main__":
     main()
