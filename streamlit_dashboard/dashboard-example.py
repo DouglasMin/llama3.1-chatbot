@@ -10,6 +10,7 @@ import altair as alt
 import plotly.express as px
 import requests
 from datetime import datetime
+import openai
 # 페이지 설정
 st.set_page_config(page_title="AI Gordon Ramsay Dashboard", layout="wide")
 
@@ -306,20 +307,36 @@ def keyword_search():
         df_time = st.session_state.df_time
         keywords = st.session_state.keywords
         
-        col1, col2 = st.columns([3, 1])
+        col1, col2 = st.columns([1, 1])
         
-        # 지역별 관심도 지도 시각화
         with col1:
+            # 시간별 관심도 시각화
+            st.subheader('⏳ 시간별 키워드 관심도')
+            df_time['date'] = pd.to_datetime(df_time['date'])
+            fig_time = px.line(df_time, x='date', y=keywords, title='시간 경과에 따른 관심도', labels={'value':'관심도', 'date':'날짜'})
+            st.plotly_chart(fig_time, use_container_width=True)
+
+            # 관심도 비교 바 차트
+            st.subheader('📈 키워드별 전체 관심도 비교')
+            df_melted = df_region.melt(id_vars=['geoName', 'geoCode'], var_name='Keyword', value_name='Interest')
+            chart_stacked = alt.Chart(df_melted).mark_bar().encode(
+                x=alt.X('geoName:N', title='지역', sort='-y'),
+                y=alt.Y('Interest:Q', title='관심도', stack='normalize'),
+                color=alt.Color('Keyword:N', scale=alt.Scale(scheme='category10')),
+                tooltip=['geoName', 'Keyword', 'Interest']
+            ).properties(width=400, height=300)
+            st.altair_chart(chart_stacked, use_container_width=True)
+
+        with col2:
+            # 지역별 관심도 지도 시각화
             st.subheader('📊 지역별 키워드 관심도')
 
             selected_keyword = st.selectbox('키워드 선택', keywords, index=keywords.index(st.session_state.selected_keyword))
             st.session_state.selected_keyword = selected_keyword
 
-            # 데이터 유효성 확인
             if selected_keyword not in df_region.columns or df_region[selected_keyword].isnull().all():
                 st.warning(f"선택한 키워드 '{selected_keyword}'에 대한 데이터가 없습니다.")
             else:
-                # 지도 시각화
                 fig = px.choropleth(df_region, 
                                     geojson="https://raw.githubusercontent.com/southkorea/southkorea-maps/master/kostat/2013/json/skorea_provinces_geo_simple.json",
                                     locations='geoName', 
@@ -328,10 +345,10 @@ def keyword_search():
                                     projection="mercator",
                                     color_continuous_scale="RdYlBu_r")
                 fig.update_geos(fitbounds="locations", visible=False)
-                fig.update_layout(height=500, margin={"r":0,"t":0,"l":0,"b":0})
+                fig.update_layout(height=400, margin={"r":0,"t":0,"l":0,"b":0})
                 st.plotly_chart(fig, use_container_width=True)
 
-        with col2:
+            # Top 5 지역
             st.subheader('🏆 Top 5 지역')
             if selected_keyword in df_region.columns:
                 top_5 = df_region.sort_values(by=selected_keyword, ascending=False).head()
@@ -340,24 +357,7 @@ def keyword_search():
             else:
                 st.warning("선택한 키워드에 대한 데이터가 없습니다.")
 
-        # 시간별 관심도 시각화
-        st.subheader('⏳ 시간별 키워드 관심도')
-        df_time['date'] = pd.to_datetime(df_time['date'])
-        fig_time = px.line(df_time, x='date', y=keywords, title='시간 경과에 따른 관심도', labels={'value':'관심도', 'date':'날짜'})
-        st.plotly_chart(fig_time, use_container_width=True)
-
-        # 관심도 비교 바 차트
-        st.subheader('📈 키워드별 전체 관심도 비교')
-        df_melted = df_region.melt(id_vars=['geoName', 'geoCode'], var_name='Keyword', value_name='Interest')
-        chart_stacked = alt.Chart(df_melted).mark_bar().encode(
-            x=alt.X('geoName:N', title='지역', sort='-y'),
-            y=alt.Y('Interest:Q', title='관심도', stack='normalize'),
-            color=alt.Color('Keyword:N', scale=alt.Scale(scheme='category10')),
-            tooltip=['geoName', 'Keyword', 'Interest']
-        ).properties(width=800, height=400)
-        st.altair_chart(chart_stacked, use_container_width=True)
-
-        # 상세 데이터 표시
+        # 상세 데이터 표시 (전체 너비 사용)
         st.subheader('📋 상세 데이터')
         st.dataframe(df_region.style.highlight_max(axis=0), use_container_width=True)
     else:
@@ -365,15 +365,15 @@ def keyword_search():
 
 
 def chatbot():
-    st.markdown('<p class="big-font">🤖Knowledge SMUW Bot🤖</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-font">🤖 AI 챗봇</p>', unsafe_allow_html=True)
     
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # 대화 기록 표시
+    st.subheader("지난 대화 목록")
+    for i, (role, content) in enumerate(st.session_state.messages[1:]):  # system 메시지 제외
+        with st.chat_message(role):
+            st.markdown(content)
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
+    # 사용자 입력
     if prompt := st.chat_input("무엇을 도와드릴까요?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -381,7 +381,17 @@ def chatbot():
 
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
-            full_response = f"여기에 AI Gordon Ramsay의 대답이 들어갑니다. 현재는 간단한 예시 응답입니다: '{prompt}'에 대해 어떤 생각을 가지고 계신가요?"
+            full_response = ""
+            for response in openai.ChatCompletion.create(
+                model=st.session_state["openai_model"],
+                messages=[
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state.messages
+                ],
+                stream=True,
+            ):
+                full_response += response.choices[0].delta.get("content", "")
+                message_placeholder.markdown(full_response + "▌")
             message_placeholder.markdown(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
@@ -409,8 +419,25 @@ def show_help():
         - 일부 키워드의 경우 데이터가 충분하지 않을 수 있습니다.
         """)
 
+def detailed_map():
+    st.markdown('<p class="big-font">🗺️ 상세 지도</p>', unsafe_allow_html=True)
+    st.markdown("여기에 상세 지도 관련 내용이 표시됩니다.")
+
+def sns_trend_analysis():
+    st.markdown('<p class="big-font">📱 SNS 트렌드 분석</p>', unsafe_allow_html=True)
+    st.markdown("여기에 SNS 트렌드 분석 관련 내용이 표시됩니다.")
+
 def main():
     st.markdown('<p class="big-font"></p>', unsafe_allow_html=True)
+
+    # 세션 상태 초기화
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "system", "content": "You are a helpful assistant."}
+        ]
+
+    if "openai_model" not in st.session_state:
+        st.session_state["openai_model"] = "gpt-3.5-turbo"
 
     # 사이드바 설정
     with st.sidebar:
@@ -432,6 +459,10 @@ def main():
             st.session_state.menu = '트렌드'
         if st.button('🔍  키워드 검색', key="btn-search", use_container_width=True):
             st.session_state.menu = '검색'
+        if st.button('🗺️  상세 지도', key="btn-detailed-map", use_container_width=True):
+            st.session_state.menu = '상세 지도'
+        if st.button('📱  SNS 트렌드', key="btn-sns-trend", use_container_width=True):
+            st.session_state.menu = 'SNS 트렌드'
         if st.button('🤖  챗봇', key="btn-chatbot", use_container_width=True):
             st.session_state.menu = '챗봇'
         
@@ -456,6 +487,10 @@ def main():
         keyword_trend()
     elif st.session_state.menu == '검색':
         keyword_search()
+    elif st.session_state.menu == '상세 지도':
+        detailed_map()
+    elif st.session_state.menu == 'SNS 트렌드':
+        sns_trend_analysis()
     elif st.session_state.menu == '챗봇':
         chatbot()
     
